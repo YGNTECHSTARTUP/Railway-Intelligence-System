@@ -1,0 +1,71 @@
+# Railway Intelligence System Configuration
+
+[server]
+host = "0.0.0.0"
+port = 8000
+cors_enabled = true
+max_connections = 1000
+request_timeout_seconds = 30
+
+[database]
+url = "127.0.0.1:8000"
+namespace = "railway"
+database = "intelligence"
+connection_pool_size = 10
+connection_timeout_seconds = 10
+query_timeout_seconds = 30
+
+[services.optimization]
+grpc_endpoint = "http://localhost:50051"  # Python OR-Tools service
+max_computation_time_seconds = 300
+default_time_horizon_minutes = 120
+enable_caching = true
+cache_ttl_seconds = 300
+
+[services.ingestion]
+enabled = true
+polling_interval_seconds = 60
+batch_size = 100
+retry_attempts = 3
+retry_delay_seconds = 5
+
+[[services.ingestion.external_apis]]
+name = "Indian Railways API"
+url = "https://api.indianrail.gov.in"
+api_key = "your-api-key-here"
+timeout_seconds = 30
+enabled = false
+
+[[services.ingestion.external_apis]]
+name = "Weather API"
+url = "https://api.openweathermap.org/data/2.5"
+api_key = "your-weather-api-key"
+timeout_seconds = 15
+enabled = true
+
+[services.websocket]
+max_connections = 1000
+message_buffer_size = 1000
+heartbeat_interval_seconds = 30
+connection_timeout_seconds = 300
+
+[logging]
+level = "info"
+file_output = true
+file_path = "logs/railway-backend.log"
+json_format = false
+include_line_numbers = true
+
+[security]
+jwt_secret = "your-super-secret-jwt-key-change-in-production-must-be-at-least-32-characters"
+jwt_expiry_hours = 24
+api_rate_limit_per_minute = 100
+enable_api_key_auth = false
+cors_origins = ["*"]
+
+[monitoring]
+prometheus_enabled = true
+prometheus_endpoint = "/metrics"
+metrics_collection_interval_seconds = 15
+health_check_enabled = true
+alert_webhook_url = "https://your-webhook-url.com/alerts"

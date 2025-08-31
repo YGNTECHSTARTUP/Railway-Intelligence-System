@@ -1,0 +1,76 @@
+[package]
+name = "railway-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# Web framework
+axum = { version = "0.7", features = ["ws", "multipart"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json", "stream"] }
+
+# Database
+surrealdb = "1.0"
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
+
+# Time and UUID
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Configuration
+config = "0.14"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Security
+jsonwebtoken = "9.0"
+
+# Metrics
+prometheus = "0.13"
+
+# Message queue (optional)
+rdkafka = { version = "0.28", optional = true }
+
+# gRPC
+tonic = "0.10"
+prost = "0.12"
+
+# Random number generation
+rand = "0.8"
+
+# Async utilities
+futures-util = "0.3"
+
+# Geospatial
+geo = "0.27"
+
+# Configuration
+toml = "0.8"
+tempfile = "3.0"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[features]
+default = []
+kafka = ["dep:rdkafka"]
+
+[[bin]]
+name = "railway-backend"
+path = "src/main.rs"
