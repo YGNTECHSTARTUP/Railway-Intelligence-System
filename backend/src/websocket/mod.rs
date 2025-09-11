@@ -7,13 +7,15 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
 };
 use tokio::sync::broadcast;
 use tracing::{info, warn, error};
 use futures_util::{SinkExt, StreamExt};
-use crate::{AppState, models::*};
+use crate::{AppState, models::*, services::train_service::*};
+use chrono::{DateTime, Utc};
+use uuid::Uuid;
 
 /// WebSocket message types for real-time communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,22 +80,26 @@ pub struct WebSocketManager {
     pub sender: broadcast::Sender<WsMessage>,
     /// Connected clients with their subscriptions
     pub clients: Arc<Mutex<HashMap<String, ClientInfo>>>,
+    /// Train service reference for real-time data
+    pub train_service: Arc<TrainService>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ClientInfo {
     pub client_id: String,
-    pub subscribed_trains: Vec<String>,
-    pub subscribed_sections: Vec<String>,
-    pub connected_at: chrono::DateTime<chrono::Utc>,
+    pub subscribed_trains: HashSet<String>,
+    pub subscribed_sections: HashSet<String>,
+    pub connected_at: DateTime<Utc>,
+    pub last_activity: DateTime<Utc>,
 }
 
 impl WebSocketManager {
-    pub fn new() -> Self {
+    pub fn new(train_service: Arc<TrainService>) -> Self {
         let (sender, _) = broadcast::channel(1000);
         Self {
             sender,
             clients: Arc::new(Mutex::new(HashMap::new())),
+            train_service,
         }
     }
 
@@ -155,6 +161,121 @@ impl WebSocketManager {
         self.broadcast(message)?;
         Ok(())
     }
+
+    /// Send train alert to all clients
+    pub async fn send_train_alert(
+        &self,
+        alert: &TrainAlert,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let message = WsMessage::SystemAlert {
+            alert_type: format!("{:?}", alert.alert_type),
+            message: alert.message.clone(),
+            severity: format!("{:?}", alert.severity),
+            timestamp: alert.created_at,
+        };
+
+        self.broadcast(message)?;
+        Ok(())
+    }
+
+    /// Send section update to subscribed clients
+    pub async fn send_section_update(
+        &self,
+        section_id: &str,
+        occupancy: u32,
+        conflicts: Vec<String>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let message = WsMessage::SectionUpdate {
+            section_id: section_id.to_string(),
+            occupancy,
+            conflicts,
+            timestamp: Utc::now(),
+        };
+
+        self.broadcast(message)?;
+        Ok(())
+    }
+
+    /// Get all trains subscribed by any client
+    pub fn get_all_subscribed_trains(&self) -> Vec<String> {
+        let clients = self.clients.lock().unwrap();
+        let mut all_trains = HashSet::new();
+        
+        for client in clients.values() {
+            all_trains.extend(client.subscribed_trains.iter().cloned());
+        }
+        
+        all_trains.into_iter().collect()
+    }
+
+    /// Update client activity timestamp
+    pub fn update_client_activity(&self, client_id: &str) {
+        let mut clients = self.clients.lock().unwrap();
+        if let Some(client) = clients.get_mut(client_id) {
+            client.last_activity = Utc::now();
+        }
+    }
+
+    /// Start background task for periodic train updates
+    pub fn start_train_monitoring_loop(
+        self: Arc<Self>,
+        interval_seconds: u64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let ws_manager = self.clone();
+        let train_service = self.train_service.clone();
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(
+                tokio::time::Duration::from_secs(interval_seconds)
+            );
+            
+            loop {
+                interval.tick().await;
+                
+                // Get all subscribed trains
+                let subscribed_trains = ws_manager.get_all_subscribed_trains();
+                if subscribed_trains.is_empty() {
+                    continue;
+                }
+                
+                // Send updates for subscribed trains
+                for train_id in subscribed_trains {
+                    if let Ok(Some(train)) = train_service.get_train_by_id(&train_id).await {
+                        if let Err(e) = ws_manager.send_train_update(&train).await {
+                            warn!("Failed to send train update for {}: {:?}", train_id, e);
+                        }
+                    }
+                }
+                
+                // Check for and send alerts
+                if let Ok(alerts) = train_service.generate_monitoring_alerts().await {
+                    for alert in alerts {
+                        if let Err(e) = ws_manager.send_train_alert(&alert).await {
+                            warn!("Failed to send train alert: {:?}", e);
+                        }
+                    }
+                }
+                
+                // Check for conflicts
+                if let Ok(conflicts) = train_service.detect_train_conflicts().await {
+                    for conflict in conflicts {
+                        let alert_msg = WsMessage::SystemAlert {
+                            alert_type: "ConflictDetected".to_string(),
+                            message: format!("Conflict detected in section {} between trains", conflict.section_id),
+                            severity: format!("{:?}", conflict.severity),
+                            timestamp: conflict.detected_at,
+                        };
+                        
+                        if let Err(e) = ws_manager.broadcast(alert_msg) {
+                            warn!("Failed to send conflict alert: {:?}", e);
+                        }
+                    }
+                }
+            }
+        });
+        
+        Ok(())
+    }
 }
 
 /// WebSocket connection handler
@@ -166,20 +287,21 @@ pub async fn websocket_handler(
 }
 
 /// Handle individual WebSocket connection
-async fn handle_socket(socket: WebSocket, _state: AppState) {
-    let client_id = uuid::Uuid::new_v4().to_string();
+async fn handle_socket(socket: WebSocket, state: AppState) {
+    let client_id = Uuid::new_v4().to_string();
     info!("New WebSocket connection: {}", client_id);
 
-    // Create WebSocket manager if not exists (should be in AppState)
-    let ws_manager = WebSocketManager::new();
+    // Create WebSocket manager with train service
+    let ws_manager = WebSocketManager::new(state.train_service.clone());
     let mut receiver = ws_manager.sender.subscribe();
 
     // Add client to manager
     let client_info = ClientInfo {
         client_id: client_id.clone(),
-        subscribed_trains: Vec::new(),
-        subscribed_sections: Vec::new(),
-        connected_at: chrono::Utc::now(),
+        subscribed_trains: HashSet::new(),
+        subscribed_sections: HashSet::new(),
+        connected_at: Utc::now(),
+        last_activity: Utc::now(),
     };
     ws_manager.add_client(client_id.clone(), client_info);
 
@@ -261,7 +383,8 @@ async fn handle_client_message(
             // Update client subscriptions
             let mut clients = ws_manager.clients.lock().unwrap();
             if let Some(client_info) = clients.get_mut(client_id) {
-                client_info.subscribed_trains = train_ids;
+                client_info.subscribed_trains = train_ids.into_iter().collect();
+                client_info.last_activity = Utc::now();
             }
         }
         WsMessage::SubscribeSection { section_ids } => {
@@ -269,7 +392,8 @@ async fn handle_client_message(
             // Update client subscriptions
             let mut clients = ws_manager.clients.lock().unwrap();
             if let Some(client_info) = clients.get_mut(client_id) {
-                client_info.subscribed_sections = section_ids;
+                client_info.subscribed_sections = section_ids.into_iter().collect();
+                client_info.last_activity = Utc::now();
             }
         }
         _ => {

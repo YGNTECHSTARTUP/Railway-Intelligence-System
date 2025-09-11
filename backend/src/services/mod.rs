@@ -7,10 +7,13 @@ pub mod train_service;
 pub mod optimization_service;
 pub mod ingestion_service;
 pub mod conflict_detection;
+pub mod grpc_client;
+pub mod optimization_converter;
 
 pub use train_service::TrainService;
 pub use optimization_service::OptimizationService;
 pub use ingestion_service::IngestionService;
+pub use grpc_client::{OptimizationGrpcClient, OptimizationClientManager, GrpcClientConfig};
 
 /// Service trait for common service patterns
 pub trait Service {

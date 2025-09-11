@@ -1,0 +1,35 @@
+# Optimization and constraint programming
+ortools>=9.7.2996
+
+# gRPC and protobuf
+grpcio>=1.59.0
+grpcio-tools>=1.59.0
+protobuf>=4.24.0
+
+# Data manipulation and scientific computing
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.11.0
+
+# Date and time handling
+python-dateutil>=2.8.0
+
+# Logging and configuration
+pydantic>=2.0.0
+loguru>=0.7.0
+pyyaml>=6.0
+
+# Development and testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+
+# Performance monitoring
+psutil>=5.9.0
+memory-profiler>=0.61.0
+
+# Optional: For advanced visualization and debugging
+matplotlib>=3.7.0
+plotly>=5.15.0

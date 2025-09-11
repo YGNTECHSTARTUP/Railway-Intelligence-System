@@ -1,0 +1,353 @@
+syntax = "proto3";
+
+package railway.optimization;
+
+import "google/protobuf/timestamp.proto";
+
+// Main optimization service
+service OptimizationService {
+    rpc OptimizeSchedule(OptimizationRequest) returns (OptimizationResponse);
+    rpc SimulateScenario(SimulationRequest) returns (SimulationResponse);
+    rpc ValidateSchedule(ValidationRequest) returns (ValidationResponse);
+    rpc GetOptimizationStatus(StatusRequest) returns (StatusResponse);
+}
+
+// Core optimization request
+message OptimizationRequest {
+    string request_id = 1;
+    string section_id = 2;
+    uint32 time_horizon_minutes = 3;
+    repeated Train trains = 4;
+    repeated Constraint constraints = 5;
+    OptimizationObjective objective = 6;
+    repeated DisruptionEvent disruptions = 7;
+    google.protobuf.Timestamp requested_at = 8;
+    OptimizationConfig config = 9;
+}
+
+// Optimization response
+message OptimizationResponse {
+    string request_id = 1;
+    OptimizationStatus status = 2;
+    repeated TrainScheduleEntry optimized_schedule = 3;
+    PerformanceMetrics kpis = 4;
+    string reasoning = 5;
+    float confidence_score = 6;
+    repeated AlternativeSchedule alternatives = 7;
+    uint64 execution_time_ms = 8;
+    google.protobuf.Timestamp completed_at = 9;
+    string error_message = 10;
+}
+
+// Train definition
+message Train {
+    string id = 1;
+    uint32 train_number = 2;
+    TrainType train_type = 3;
+    TrainPriority priority = 4;
+    uint32 capacity_passengers = 5;
+    float length_meters = 6;
+    float max_speed_kmh = 7;
+    google.protobuf.Timestamp scheduled_departure = 8;
+    google.protobuf.Timestamp scheduled_arrival = 9;
+    string origin_station = 10;
+    string destination_station = 11;
+    repeated string route_sections = 12;
+    TrainCharacteristics characteristics = 13;
+}
+
+// Train characteristics for optimization
+message TrainCharacteristics {
+    float acceleration_ms2 = 1;
+    float deceleration_ms2 = 2;
+    float power_kw = 3;
+    float weight_tons = 4;
+    uint32 passenger_load_percent = 5;
+    bool is_electric = 6;
+    repeated string required_platforms = 7;
+}
+
+// Constraint definitions
+message Constraint {
+    string id = 1;
+    ConstraintType type = 2;
+    uint32 priority = 3; // 1 = highest, 10 = lowest
+    map<string, string> parameters = 4;
+    bool is_hard_constraint = 5;
+}
+
+// Constraint types
+enum ConstraintType {
+    CONSTRAINT_TYPE_UNSPECIFIED = 0;
+    SAFETY_DISTANCE = 1;
+    PLATFORM_CAPACITY = 2;
+    TRAIN_PRIORITY = 3;
+    MAINTENANCE_WINDOW = 4;
+    SPEED_LIMIT = 5;
+    CROSSING_TIME = 6;
+    SIGNAL_SPACING = 7;
+    ENERGY_EFFICIENCY = 8;
+    PASSENGER_TRANSFER = 9;
+}
+
+// Optimization objectives
+message OptimizationObjective {
+    ObjectiveType primary_objective = 1;
+    repeated WeightedObjective secondary_objectives = 2;
+    float time_limit_seconds = 3;
+    bool enable_preprocessing = 4;
+}
+
+message WeightedObjective {
+    ObjectiveType objective = 1;
+    float weight = 2;
+}
+
+enum ObjectiveType {
+    OBJECTIVE_TYPE_UNSPECIFIED = 0;
+    MINIMIZE_DELAY = 1;
+    MAXIMIZE_THROUGHPUT = 2;
+    MINIMIZE_ENERGY_CONSUMPTION = 3;
+    MAXIMIZE_UTILIZATION = 4;
+    MINIMIZE_CONFLICTS = 5;
+    BALANCED_OPTIMAL = 6;
+}
+
+// Train types and priorities
+enum TrainType {
+    TRAIN_TYPE_UNSPECIFIED = 0;
+    PASSENGER = 1;
+    EXPRESS = 2;
+    FREIGHT = 3;
+    MAIL = 4;
+    MAINTENANCE = 5;
+    EMPTY = 6;
+}
+
+enum TrainPriority {
+    TRAIN_PRIORITY_UNSPECIFIED = 0;
+    PRIORITY_EMERGENCY = 1;
+    PRIORITY_EXPRESS = 2;
+    PRIORITY_MAIL = 3;
+    PRIORITY_PASSENGER = 4;
+    PRIORITY_FREIGHT = 5;
+    PRIORITY_MAINTENANCE = 6;
+}
+
+// Optimization status
+enum OptimizationStatus {
+    OPTIMIZATION_STATUS_UNSPECIFIED = 0;
+    OPTIMAL = 1;
+    FEASIBLE = 2;
+    INFEASIBLE = 3;
+    UNKNOWN = 4;
+    TIME_LIMIT_EXCEEDED = 5;
+    ERROR = 6;
+}
+
+// Performance metrics
+message PerformanceMetrics {
+    float total_delay_minutes = 1;
+    float average_delay_per_train = 2;
+    uint32 conflicts_resolved = 3;
+    float throughput_trains_per_hour = 4;
+    float utilization_percent = 5;
+    float energy_consumption_kwh = 6;
+    uint32 platform_changes = 7;
+    float passenger_waiting_time_minutes = 8;
+}
+
+// Train schedule entry
+message TrainScheduleEntry {
+    string train_id = 1;
+    uint32 train_number = 2;
+    google.protobuf.Timestamp scheduled_departure = 3;
+    google.protobuf.Timestamp scheduled_arrival = 4;
+    uint32 platform = 5;
+    TrainPriority priority_applied = 6;
+    int32 delay_adjustment_minutes = 7;
+    repeated string conflicts_resolved = 8;
+    repeated SpeedProfilePoint speed_profile = 9;
+}
+
+// Speed profile point
+message SpeedProfilePoint {
+    float position_km = 1;
+    float speed_kmh = 2;
+    float time_offset_minutes = 3;
+}
+
+// Alternative schedule
+message AlternativeSchedule {
+    string name = 1;
+    string description = 2;
+    repeated TrainScheduleEntry schedule = 3;
+    PerformanceMetrics kpis = 4;
+    string trade_offs = 5;
+    float score = 6;
+}
+
+// Disruption event
+message DisruptionEvent {
+    string id = 1;
+    DisruptionType type = 2;
+    string affected_section = 3;
+    google.protobuf.Timestamp start_time = 4;
+    google.protobuf.Timestamp end_time = 5;
+    uint32 severity = 6; // 1-10 scale
+    map<string, string> metadata = 7;
+}
+
+enum DisruptionType {
+    DISRUPTION_TYPE_UNSPECIFIED = 0;
+    SIGNAL_FAILURE = 1;
+    TRACK_MAINTENANCE = 2;
+    WEATHER = 3;
+    ACCIDENT = 4;
+    POWER_OUTAGE = 5;
+    EQUIPMENT_FAILURE = 6;
+}
+
+// Simulation messages
+message SimulationRequest {
+    string request_id = 1;
+    string scenario_name = 2;
+    string section_id = 3;
+    repeated TrainScheduleEntry base_schedule = 4;
+    repeated ScheduleModification modifications = 5;
+    repeated WhatIfCondition what_if_conditions = 6;
+    float simulation_duration_hours = 7;
+}
+
+message ScheduleModification {
+    ModificationType type = 1;
+    string train_id = 2;
+    map<string, string> parameters = 3;
+}
+
+enum ModificationType {
+    MODIFICATION_TYPE_UNSPECIFIED = 0;
+    DELAY_TRAIN = 1;
+    CANCEL_TRAIN = 2;
+    ADD_TRAIN = 3;
+    CHANGE_ROUTE = 4;
+    CHANGE_PRIORITY = 5;
+}
+
+message WhatIfCondition {
+    ConditionType type = 1;
+    map<string, string> parameters = 2;
+    uint32 impact_level = 3; // 1-10 scale
+}
+
+enum ConditionType {
+    CONDITION_TYPE_UNSPECIFIED = 0;
+    CONDITION_WEATHER_DISRUPTION = 1;
+    CONDITION_SIGNAL_FAILURE = 2;
+    CONDITION_TRACK_MAINTENANCE = 3;
+    CONDITION_INCREASED_DEMAND = 4;
+    CONDITION_EQUIPMENT_FAILURE = 5;
+}
+
+message SimulationResponse {
+    string request_id = 1;
+    bool success = 2;
+    string scenario_name = 3;
+    SimulationResults simulation_results = 4;
+    PerformanceComparison performance_comparison = 5;
+    repeated string recommendations = 6;
+    string error_message = 7;
+}
+
+message SimulationResults {
+    uint32 total_trains_processed = 1;
+    float average_delay_minutes = 2;
+    float throughput_trains_per_hour = 3;
+    uint32 conflicts_detected = 4;
+    float utilization_percent = 5;
+    repeated SimulationEvent timeline_events = 6;
+}
+
+message SimulationEvent {
+    google.protobuf.Timestamp timestamp = 1;
+    string event_type = 2;
+    string train_id = 3;
+    string section_id = 4;
+    string description = 5;
+}
+
+message PerformanceComparison {
+    float baseline_delay_minutes = 1;
+    float scenario_delay_minutes = 2;
+    float improvement_percent = 3;
+    float baseline_throughput = 4;
+    float scenario_throughput = 5;
+    float throughput_improvement_percent = 6;
+}
+
+// Validation messages
+message ValidationRequest {
+    string request_id = 1;
+    repeated TrainScheduleEntry schedule = 2;
+    repeated Constraint constraints = 3;
+    string section_id = 4;
+}
+
+message ValidationResponse {
+    string request_id = 1;
+    bool is_valid = 2;
+    repeated ValidationError errors = 3;
+    repeated ValidationWarning warnings = 4;
+}
+
+message ValidationError {
+    string error_code = 1;
+    string message = 2;
+    string train_id = 3;
+    google.protobuf.Timestamp timestamp = 4;
+}
+
+message ValidationWarning {
+    string warning_code = 1;
+    string message = 2;
+    string train_id = 3;
+}
+
+// Status messages
+message StatusRequest {
+    string request_id = 1;
+}
+
+message StatusResponse {
+    string request_id = 1;
+    ProcessingStatus status = 2;
+    float progress_percent = 3;
+    string current_phase = 4;
+    uint64 estimated_completion_ms = 5;
+}
+
+enum ProcessingStatus {
+    PROCESSING_STATUS_UNSPECIFIED = 0;
+    QUEUED = 1;
+    PROCESSING = 2;
+    COMPLETED = 3;
+    FAILED = 4;
+    CANCELLED = 5;
+}
+
+// Configuration
+message OptimizationConfig {
+    uint32 max_solver_time_seconds = 1;
+    bool enable_preprocessing = 2;
+    uint32 num_search_workers = 3;
+    SolverStrategy strategy = 4;
+    bool enable_detailed_logging = 5;
+}
+
+enum SolverStrategy {
+    SOLVER_STRATEGY_UNSPECIFIED = 0;
+    AUTOMATIC = 1;
+    FIXED_SEARCH = 2;
+    PORTFOLIO_SEARCH = 3;
+    LP_SEARCH = 4;
+}

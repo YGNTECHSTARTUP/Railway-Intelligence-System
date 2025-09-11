@@ -128,6 +128,23 @@ impl Database {
         Ok(())
     }
 
+    pub async fn delete_train(&self, train_id: &str) -> Result<bool> {
+        let deleted: Option<Train> = self.client
+            .delete(("trains", train_id))
+            .await?;
+        
+        Ok(deleted.is_some())
+    }
+
+    pub async fn get_all_trains(&self) -> Result<Vec<Train>> {
+        let mut result = self.client
+            .query("SELECT * FROM trains ORDER BY train_number ASC")
+            .await?;
+        
+        let trains: Vec<Train> = result.take(0)?;
+        Ok(trains)
+    }
+
     pub async fn get_trains_in_section(&self, section_id: &str) -> Result<Vec<Train>> {
         let mut result = self.client
             .query("SELECT * FROM trains WHERE current_section = $section")
@@ -195,6 +212,19 @@ impl Database {
             .await?;
         
         Ok(created.first().unwrap().id.clone())
+    }
+
+    pub async fn get_train_events(&self, train_id: &str, hours: u32) -> Result<Vec<TrainEvent>> {
+        let start_time = chrono::Utc::now() - chrono::Duration::hours(hours as i64);
+        
+        let mut result = self.client
+            .query("SELECT * FROM train_events WHERE train_id = $train_id AND timestamp >= $start_time ORDER BY timestamp DESC")
+            .bind(("train_id", train_id))
+            .bind(("start_time", start_time))
+            .await?;
+        
+        let events: Vec<TrainEvent> = result.take(0)?;
+        Ok(events)
     }
 
     pub async fn create_disruption_event(&self, event: &DisruptionEvent) -> Result<String> {

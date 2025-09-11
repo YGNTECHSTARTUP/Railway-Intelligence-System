@@ -106,7 +106,7 @@ pub enum DisruptionStatus {
     Monitoring,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub enum TrainPriority {
     Emergency = 1,
     Mail = 2,
@@ -122,7 +122,7 @@ impl TrainPriority {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Direction {
     Up,
     Down,

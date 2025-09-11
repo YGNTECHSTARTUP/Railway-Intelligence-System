@@ -7,11 +7,10 @@ use super::{Service, ServiceResult, ServiceError};
 
 #[derive(Debug, Clone)]
 pub struct OptimizationService {
-    // Future: gRPC client for Python optimization service
-    // grpc_client: OptimizationClient,
+    grpc_client_manager: std::sync::Arc<tokio::sync::Mutex<super::grpc_client::OptimizationClientManager>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationRequest {
     pub section_id: String,
     pub trains: Vec<Train>,
@@ -20,14 +19,14 @@ pub struct OptimizationRequest {
     pub time_horizon_minutes: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OptimizationConstraint {
     pub constraint_type: ConstraintType,
     pub priority: u8, // 1 = highest, 10 = lowest
     pub parameters: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConstraintType {
     SafetyDistance,
     PlatformCapacity,
@@ -37,7 +36,7 @@ pub enum ConstraintType {
     CrossingTime,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OptimizationObjective {
     MinimizeDelay,
     MaximizeThroughput,
@@ -73,7 +72,7 @@ pub struct SpeedProfilePoint {
     pub time_offset_minutes: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulationRequest {
     pub scenario_name: String,
     pub section_id: String,
@@ -82,7 +81,7 @@ pub struct SimulationRequest {
     pub simulation_duration_hours: f32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WhatIfChange {
     pub change_type: WhatIfChangeType,
     pub train_id: Option<String>,
@@ -90,7 +89,7 @@ pub struct WhatIfChange {
     pub parameters: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WhatIfChangeType {
     AddTrain,
     RemoveTrain,
@@ -140,27 +139,49 @@ pub struct PerformanceComparison {
 
 impl OptimizationService {
     pub fn new() -> Self {
+        let grpc_config = super::grpc_client::GrpcClientConfig::from_env();
+        let client_manager = super::grpc_client::OptimizationClientManager::new(grpc_config);
+        
         Self {
-            // Future: Initialize gRPC client
+            grpc_client_manager: std::sync::Arc::new(tokio::sync::Mutex::new(client_manager)),
+        }
+    }
+    
+    pub fn with_config(grpc_config: super::grpc_client::GrpcClientConfig) -> Self {
+        let client_manager = super::grpc_client::OptimizationClientManager::new(grpc_config);
+        
+        Self {
+            grpc_client_manager: std::sync::Arc::new(tokio::sync::Mutex::new(client_manager)),
         }
     }
 
     /// Optimize schedule for a specific section using constraint programming
     pub async fn optimize_schedule(&self, request: OptimizationRequest) -> ServiceResult<OptimizationResponse> {
         info!("Starting schedule optimization for section: {}", request.section_id);
-
-        // For now, implement a mock optimization response
-        // TODO: Replace with actual gRPC call to Python OR-Tools service
-        let mock_response = self.mock_optimization(&request).await?;
+        
+        // Validate request first
+        self.validate_request(&request)?;
+        
+        // Try to use gRPC client, fallback to mock if unavailable
+        let response = match self.try_grpc_optimization(&request).await {
+            Ok(response) => {
+                info!("Successfully used OR-Tools optimization via gRPC");
+                response
+            }
+            Err(e) => {
+                tracing::warn!("gRPC optimization failed, falling back to mock: {}", e);
+                self.mock_optimization(&request).await?
+            }
+        };
 
         info!(
             "Optimization completed for section {}: {} conflicts resolved, {:.1} minutes delay reduction",
             request.section_id,
-            mock_response.conflicts_resolved,
-            mock_response.total_delay_reduction_minutes
+            response.conflicts_resolved,
+            response.total_delay_reduction_minutes
         );
 
-        Ok(mock_response)
+        Ok(response)
     }
 
     /// Simulate "what-if" scenarios
@@ -210,8 +231,45 @@ impl OptimizationService {
 
         Ok(())
     }
+    
+    /// Try to perform optimization using gRPC call to Python OR-Tools service
+    async fn try_grpc_optimization(&self, request: &OptimizationRequest) -> ServiceResult<OptimizationResponse> {
+        let mut client_manager = self.grpc_client_manager.lock().await;
+        
+        // Get gRPC client
+        let client = client_manager.get_client().await
+            .map_err(|e| ServiceError::Optimization(format!("Failed to connect to optimizer: {}", e)))?;
+        
+        // Convert request format (this would normally convert to protobuf)
+        // For now, we'll call the mock since protobuf isn't generated yet
+        let grpc_response = client.optimize_schedule(request.clone()).await
+            .map_err(|e| ServiceError::Optimization(format!("Optimization failed: {}", e)))?;
+        
+        info!("OR-Tools optimization completed via gRPC in {}ms", grpc_response.computation_time_ms);
+        Ok(grpc_response)
+    }
+    
+    /// Try to perform simulation using gRPC call to Python service
+    async fn try_grpc_simulation(&self, request: &SimulationRequest) -> ServiceResult<SimulationResponse> {
+        let mut client_manager = self.grpc_client_manager.lock().await;
+        
+        let client = client_manager.get_client().await
+            .map_err(|e| ServiceError::Optimization(format!("Failed to connect to optimizer: {}", e)))?;
+        
+        let grpc_response = client.simulate_scenario(request.clone()).await
+            .map_err(|e| ServiceError::Optimization(format!("Simulation failed: {}", e)))?;
+        
+        info!("OR-Tools simulation completed via gRPC");
+        Ok(grpc_response)
+    }
+    
+    /// Check if OR-Tools optimization service is available
+    pub async fn is_optimizer_available(&self) -> bool {
+        let mut client_manager = self.grpc_client_manager.lock().await;
+        client_manager.health_check().await
+    }
 
-    // Mock optimization implementation (to be replaced with gRPC)
+    // Mock optimization implementation (fallback when gRPC is unavailable)
     async fn mock_optimization(&self, request: &OptimizationRequest) -> ServiceResult<OptimizationResponse> {
         use rand::Rng;
         

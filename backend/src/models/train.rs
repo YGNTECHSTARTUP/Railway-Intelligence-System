@@ -29,8 +29,7 @@ pub struct TrainConsist {
     pub max_speed_kmh: f32,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[derive(PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum TrainStatus {
     Scheduled,
     Running,

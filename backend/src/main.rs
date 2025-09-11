@@ -1,5 +1,5 @@
 use axum::{
-    routing::{get, post},
+    routing::{get, post, put, delete},
     Router,
     response::Json,
     http::StatusCode,
@@ -20,12 +20,14 @@ mod metrics;
 mod auth;
 mod websocket;
 mod config;
+mod generated;
 
 use services::*;
 use database::Database;
 use config::AppConfig;
 use metrics::AppMetrics;
 use auth::AuthService;
+use websocket::WebSocketManager;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -36,6 +38,7 @@ pub struct AppState {
     pub auth_service: Arc<AuthService>,
     pub metrics: Arc<AppMetrics>,
     pub config: Arc<AppConfig>,
+    pub websocket_manager: Arc<WebSocketManager>,
 }
 
 #[tokio::main]
@@ -74,6 +77,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db.clone(), 
         config.services.ingestion.clone()
     ));
+    
+    // Initialize WebSocket manager
+    let websocket_manager = Arc::new(WebSocketManager::new(train_service.clone()));
+    info!("🔌 WebSocket manager initialized");
 
     let state = AppState {
         db,
@@ -83,6 +90,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         auth_service,
         metrics: metrics.clone(),
         config: config.clone(),
+        websocket_manager: websocket_manager.clone(),
     };
 
     // Start background metrics updater
@@ -104,6 +112,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
         info!("🔄 Background data ingestion started");
     }
+    
+    // Start WebSocket monitoring loop
+    let websocket_state = state.clone();
+    tokio::spawn(async move {
+        if let Err(e) = websocket_state.websocket_manager.start_train_monitoring_loop(10) {
+            error!("WebSocket monitoring loop failed: {:?}", e);
+        }
+    });
+    info!("🔌 WebSocket monitoring loop started");
 
     // Build application routes
     let app = Router::new()
@@ -113,14 +130,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/auth/logout", post(auth::logout))
         .route("/api/v1/auth/user", get(auth::get_user_info))
         // Train management endpoints
-        .route("/api/v1/trains", post(api::trains::create_train))
+        .route("/api/v1/trains", get(api::trains::get_all_trains).post(api::trains::create_train))
         .route("/api/v1/trains/status", get(api::trains::get_train_status))
         .route("/api/v1/trains/delayed", get(api::trains::get_delayed_trains))
-        .route("/api/v1/trains/:train_id", get(api::trains::get_train_by_id))
+        .route("/api/v1/trains/:train_id", 
+               get(api::trains::get_train_by_id)
+               .put(api::trains::update_train)
+               .delete(api::trains::delete_train))
         .route("/api/v1/trains/:train_id/update", post(api::trains::update_train_status))
         .route("/api/v1/trains/section/:section_id", get(api::trains::get_trains_in_section))
+        // Enhanced monitoring endpoints
+        .route("/api/v1/trains/analytics", get(api::trains::get_trains_with_analytics))
+        .route("/api/v1/trains/positions", get(api::trains::get_real_time_positions))
+        .route("/api/v1/trains/conflicts", get(api::trains::get_train_conflicts))
+        .route("/api/v1/trains/alerts", get(api::trains::get_monitoring_alerts))
+        .route("/api/v1/trains/:train_id/history", get(api::trains::get_train_performance_history))
+        .route("/api/v1/trains/density", get(api::trains::get_section_density))
         // Optimization endpoints
-        .route("/api/v1/optimize/schedule", post(api::optimization::optimize_schedule))
+        .nest("/api/v1/optimize", api::optimization::routes())
         // Simulation endpoints
         .route("/api/v1/simulate/scenario", post(api::simulation::simulate_scenario))
         // Section endpoints
