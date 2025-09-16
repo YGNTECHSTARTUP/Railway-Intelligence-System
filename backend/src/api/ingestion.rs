@@ -6,19 +6,13 @@ use axum::{
 use serde_json::{json, Value};
 use tracing::{info, error};
 
-use crate::{AppState, auth::{AuthenticatedUser, UserRole}};
+use crate::AppState;
 
 /// Trigger manual data ingestion
 pub async fn trigger_ingestion(
-    user: AuthenticatedUser,
     State(state): State<AppState>,
 ) -> Result<Json<Value>, StatusCode> {
-    // Only admins and operators can trigger manual ingestion
-    if user.0.role != UserRole::Admin && user.0.role != UserRole::Operator {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    info!("Manual ingestion triggered by user: {}", user.0.username);
+    info!("Manual ingestion triggered");
 
     match state.ingestion_service.trigger_manual_ingestion().await {
         Ok(report) => {
@@ -45,11 +39,9 @@ pub async fn trigger_ingestion(
 
 /// Get ingestion statistics
 pub async fn get_ingestion_stats(
-    user: AuthenticatedUser,
     State(state): State<AppState>,
 ) -> Result<Json<Value>, StatusCode> {
-    // Any authenticated user can view ingestion stats
-    info!("Ingestion stats requested by user: {}", user.0.username);
+    info!("Ingestion stats requested");
 
     match state.ingestion_service.get_ingestion_stats().await {
         Ok(stats) => {
@@ -74,17 +66,9 @@ pub async fn get_ingestion_stats(
 
 /// Check health of external APIs
 pub async fn check_api_health(
-    user: AuthenticatedUser,
     State(state): State<AppState>,
 ) -> Result<Json<Value>, StatusCode> {
-    // System monitors, admins, and operators can check API health
-    if user.0.role != UserRole::Admin && 
-       user.0.role != UserRole::Operator && 
-       user.0.role != UserRole::SystemMonitor {
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    info!("API health check requested by user: {}", user.0.username);
+    info!("API health check requested");
 
     match state.ingestion_service.check_api_health().await {
         Ok(health_status) => {

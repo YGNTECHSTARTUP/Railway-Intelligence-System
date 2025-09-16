@@ -17,8 +17,6 @@ mod api;
 mod ingestion;
 mod synthetic;
 mod metrics;
-mod auth;
-mod websocket;
 mod config;
 mod generated;
 
@@ -26,8 +24,6 @@ use services::*;
 use database::Database;
 use config::AppConfig;
 use metrics::AppMetrics;
-use auth::AuthService;
-use websocket::WebSocketManager;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -35,10 +31,8 @@ pub struct AppState {
     pub train_service: Arc<TrainService>,
     pub optimization_service: Arc<OptimizationService>,
     pub ingestion_service: Arc<IngestionService>,
-    pub auth_service: Arc<AuthService>,
     pub metrics: Arc<AppMetrics>,
     pub config: Arc<AppConfig>,
-    pub websocket_manager: Arc<WebSocketManager>,
 }
 
 #[tokio::main]
@@ -63,13 +57,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(Database::new().await?);
     info!("✅ Database connected");
 
-    // Initialize authentication service
-    let auth_service = Arc::new(AuthService::new(
-        &config.security.jwt_secret,
-        config.security.jwt_expiry_hours,
-    ));
-    info!("🔐 Authentication service initialized");
-
     // Initialize services
     let train_service = Arc::new(TrainService::new(db.clone()));
     let optimization_service = Arc::new(OptimizationService::new());
@@ -77,20 +64,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db.clone(), 
         config.services.ingestion.clone()
     ));
-    
-    // Initialize WebSocket manager
-    let websocket_manager = Arc::new(WebSocketManager::new(train_service.clone()));
-    info!("🔌 WebSocket manager initialized");
 
     let state = AppState {
         db,
         train_service,
         optimization_service,
         ingestion_service,
-        auth_service,
         metrics: metrics.clone(),
         config: config.clone(),
-        websocket_manager: websocket_manager.clone(),
     };
 
     // Start background metrics updater
@@ -113,22 +94,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         info!("🔄 Background data ingestion started");
     }
     
-    // Start WebSocket monitoring loop
-    let websocket_state = state.clone();
-    tokio::spawn(async move {
-        if let Err(e) = websocket_state.websocket_manager.start_train_monitoring_loop(10) {
-            error!("WebSocket monitoring loop failed: {:?}", e);
-        }
-    });
-    info!("🔌 WebSocket monitoring loop started");
 
     // Build application routes
     let app = Router::new()
         .route("/health", get(health_check))
-        // Authentication endpoints
-        .route("/api/v1/auth/login", post(auth::login))
-        .route("/api/v1/auth/logout", post(auth::logout))
-        .route("/api/v1/auth/user", get(auth::get_user_info))
         // Train management endpoints
         .route("/api/v1/trains", get(api::trains::get_all_trains).post(api::trains::create_train))
         .route("/api/v1/trains/status", get(api::trains::get_train_status))
@@ -156,12 +125,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/analytics/kpis", get(api::analytics::get_kpis))
         .route("/api/v1/analytics/overview", get(api::analytics::get_system_overview))
         .route("/api/v1/analytics/sections", get(api::analytics::get_section_analytics))
-        // Data ingestion endpoints
-        .route("/api/v1/ingestion/trigger", post(api::ingestion::trigger_ingestion))
-        .route("/api/v1/ingestion/stats", get(api::ingestion::get_ingestion_stats))
-        .route("/api/v1/ingestion/health", get(api::ingestion::check_api_health))
-        // WebSocket endpoint
-        .route("/ws", get(websocket::websocket_handler))
         // Metrics endpoint
         .route("/metrics", get(metrics::metrics_handler))
         .layer(CorsLayer::permissive())
@@ -170,7 +133,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind_address = config.server_bind_address();
     info!("🚀 Server starting on {}", bind_address);
     info!("📊 Metrics available at: http://{}/metrics", bind_address);
-    info!("🔌 WebSocket endpoint: ws://{}/ws", bind_address);
 
     // Start server
     let listener = tokio::net::TcpListener::bind(&bind_address).await?;
